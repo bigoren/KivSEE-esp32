@@ -81,10 +81,11 @@ SimplePatternList gPatterns = { confetti, rainbow, singleColor, splash, blink, c
 uint8_t gCurrentPatternNumber = 0; // Index number of which pattern is current
 uint8_t gHue = 0; // rotating "base color" used by many of the patterns
 
-bool setBrightnessValue = false;
+// bool setBrightnessValue = false;
 int brightnessValue = 0;
-bool setAnimSelValue = false;
+// bool setAnimSelValue = false;
 int animSelValue = 0;
+bool resetPatternNumber = false;
 bool resetFlag = false;
 
 unsigned int lastReportTime = 0;
@@ -93,6 +94,7 @@ unsigned int lastMonitorTime = 0;
 // set up the 'time/seconds' topic
 AdafruitIO_Time *seconds = io.time(AIO_TIME_SECONDS);
 time_t secTime = 0;
+bool secondFlag = false;
 
 // set up the 'time/milliseconds' topic
 //AdafruitIO_Time *msecs = io.time(AIO_TIME_MILLIS);
@@ -152,7 +154,9 @@ void setAnimation(AdafruitIO_Data *data) {
   Serial.println(data->value());
   animSelValue = atoi(data->value());
   xQueueSend(animationQueue, &animSelValue, portMAX_DELAY);
-  // setAnimSelValue = true;
+  if (animSelValue == 0) {
+    resetPatternNumber = true;
+  }
 }
 
 void printDigits(int digits){
@@ -386,14 +390,23 @@ void loop()
   }
   else if (animSel > 0) {
     // gCurrentPatternNumber = animSelValue-1;
-    gPatterns[animSelValue-1]();
+    gPatterns[animSel-1]();
   }
   else {
     // Call the current pattern function once, updating the 'leds' array
+    if (resetPatternNumber) {
+      gCurrentPatternNumber = 0;
+      resetPatternNumber = false;
+    }
+    if ((second() == 0) && !secondFlag){
+      nextPattern();
+      secondFlag = true;
+    }
+    if (second() != 0) {
+      secondFlag = false;
+    }
     gPatterns[gCurrentPatternNumber]();    
   }
-    
-  // gPatterns[gCurrentPatternNumber]();    
 
   // send the 'leds' array out to the actual LED strip
   FastLED.show();  
@@ -401,8 +414,8 @@ void loop()
   FastLED.delay(1000/FRAMES_PER_SECOND); 
 
   // do some periodic updates
-  EVERY_N_MILLISECONDS( 30 ) { gHue++; } // slowly cycle the "base color" through the rainbow
-  EVERY_N_SECONDS( 30 ) { nextPattern(); } // change patterns periodically
+  EVERY_N_MILLISECONDS( 50 ) { gHue++; } // slowly cycle the "base color" through the rainbow
+  // EVERY_N_SECONDS( 60 ) { nextPattern(); } // change patterns periodically
 }
 
 
@@ -416,8 +429,6 @@ void nextPattern()
 {
   // add one to the current pattern number, and wrap around at the end
   gCurrentPatternNumber = (gCurrentPatternNumber + 1) % ARRAY_SIZE( gPatterns);
-  Serial.print("CurrentPatternNumber is now at: ");
-  Serial.println(gCurrentPatternNumber);
 }
 
 void paintRange(int start, int end, CRGB color) {
@@ -511,10 +522,10 @@ void singleColor() {
   static int eDestHue = 0;
   
   changeHue(sHue, sDestHue, SheepStart, SheepEnd);
-  changeHue(aHue, aDestHue, KTop, KBot);
-  changeHue(lHue, lDestHue, ITop, IBot);
-  changeHue(lHue, lDestHue, VTop, VBot);
-  changeHue(eHue, eDestHue, STop, SBot);
+  changeHue(sHue, sDestHue, KTop, KBot);
+  changeHue(aHue, aDestHue, ITop, IBot);
+  changeHue(aHue, aDestHue, VTop, VBot);
+  changeHue(lHue, lDestHue, STop, SBot);
   changeHue(eHue, eDestHue, E1Top, E1Bot);
   changeHue(eHue, eDestHue, E2Top, E2Bot);
 }

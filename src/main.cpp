@@ -1,3 +1,5 @@
+#define CONFIG_USE_ONLY_LWIP_SELECT 1
+
 // edit the config.h file and enter your Adafruit IO credentials
 // and any additional configuration needed for WiFi, cellular,
 // or ethernet clients.
@@ -54,8 +56,8 @@ void blink();
 void splash();
 void changeHue(int &currHue, int &destHue, int iStart, int iEnd);
 void singleColor();
-void toggleSegment(int iStart, int iEnd, int hue, int sat);
-void toggle();
+// void toggleSegment(int iStart, int iEnd, int hue, int sat);
+// void toggle();
 void rainbow();
 void rainbowWithGlitter();
 void addGlitter(fract8 chanceOfGlitter);
@@ -66,14 +68,15 @@ void juggle();
 void dotted();
 
 int brightness = 20;
+int animSel = 0;
 bool isPlain = true;
 
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
 
 // List of patterns to cycle through.  Each is defined as a separate function below.
 typedef void (*SimplePatternList[])();
-//SimplePatternList gPatterns = { toggle };
-SimplePatternList gPatterns = { confettiLetters, fill, dotted, bpm, sinelon, blink, splash, singleColor, rainbow, confetti };
+SimplePatternList gPatterns = { confetti, rainbow, singleColor, splash, blink, confettiLetters, dotted, bpm };
+// SimplePatternList gPatterns = { confettiLetters, fill, dotted, bpm, sinelon, blink, splash, singleColor, rainbow, confetti };
 
 uint8_t gCurrentPatternNumber = 0; // Index number of which pattern is current
 uint8_t gHue = 0; // rotating "base color" used by many of the patterns
@@ -108,6 +111,14 @@ AdafruitIO_Feed *rssi = io.feed("rssi_kivsee_sign");
 AdafruitIO_Feed *animSelFeed = io.feed("button");
 AdafruitIO_Feed *brightnessFeed = io.feed("brightness");
 
+TaskHandle_t Task1;
+
+QueueHandle_t brightnessQueue;
+const int brightnessQueueSize = 10;
+
+QueueHandle_t animationQueue;
+const int animationQueueSize = 10;
+
 // message handler for the seconds feed
 void handleSecs(char *data, uint16_t len) {
   // Serial.print("Seconds Feed: ");
@@ -129,17 +140,19 @@ void handleSecs(char *data, uint16_t len) {
 // }
 
 void setBrightness(AdafruitIO_Data *data) {
-  Serial.print("received new brightness value <- ");
+  Serial.print("[0] received new brightness value from web ");
   Serial.println(data->value());
   brightnessValue = atoi(data->value());
-  setBrightnessValue = true;
+  xQueueSend(brightnessQueue, &brightnessValue, portMAX_DELAY);
+  // setBrightnessValue = true;
 }
 
 void setAnimation(AdafruitIO_Data *data) {
-  Serial.print("received new animation selected value <- ");
+  Serial.print("[0] received new animation selected value from web ");
   Serial.println(data->value());
   animSelValue = atoi(data->value());
-  setAnimSelValue = true;
+  xQueueSend(animationQueue, &animSelValue, portMAX_DELAY);
+  // setAnimSelValue = true;
 }
 
 void printDigits(int digits){
@@ -173,16 +186,7 @@ time_t timeSync()
   return (secTime + TZ_HOUR_SHIFT * 3600);
 }
 
-void setup() {
-  
-  // tell FastLED about the LED strip configuration
-  FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
-  
-  // start the serial connection
-  Serial.begin(115200);
-
-  // wait for serial monitor to open
-  while(! Serial);
+void MonitorLoop( void * parameter) {
 
   Serial.print("Connecting to Adafruit IO");
 
@@ -265,91 +269,131 @@ void setup() {
 
   ArduinoOTA.begin();
 
+  for(;;) {
+    unsigned int currTime = millis();
+
+    ArduinoOTA.handle();
+
+    // io.run(); is required for all sketches.
+    // it should always be present at the top of your loop
+    // function. it keeps the client connected to
+    // io.adafruit.com, and processes any incoming data.
+    io.run();
+
+    // don't do anything before we get a time read and set the clock
+    if (timeStatus() == timeNotSet) {
+      if (secTime > 0) {
+        setTime(timeSync());
+        Serial.print("Time set, time is now <- ");
+        digitalClockDisplay();
+      }
+      // else {
+      //   return;
+      // }
+    }
+    
+    if (currTime - lastMonitorTime >= (MONITOR_SECS * 1000)) {
+      // save count to the 'counter' feed on Adafruit IO
+      Serial.print("sending rssi value -> ");
+      // Serial.println(count);
+      // counter->save(count);
+      // save the wifi signal strength (RSSI) to the 'rssi' feed on Adafruit IO
+      rssi->save(WiFi.RSSI());
+      
+      Serial.print("Time is: ");
+      digitalClockDisplay();
+
+      Serial.print("Brightness value # ");
+      Serial.println(brightnessValue);
+
+      Serial.print("Animation selected value # ");
+      Serial.println(animSelValue);
+
+      // increment the count by 1
+      // count++;
+      lastMonitorTime = currTime;
+    }
+    
+    // // counter disabled to not overload adfruit IO for no need
+    // // reset the count at some hour of the day
+    // if ((hour() == RESET_HOUR) && (minute() == 0) && (second() == 0) && (!resetFlag)) {
+    //   Serial.print("sending count and presses reset at time -> ");
+    //   digitalClockDisplay();
+    //   count = 0;
+    //   counter->save(count);
+    //   // remember a reset happened so we don't do it again and bombard Adafruit IO with requests
+    //   resetFlag = true;
+    // }
+
+    //// reallow reset to occur after reset time has passed
+    // if (second() == 1) {
+    //   resetFlag = false;
+    // }
+
+    vTaskDelay(5);
+  }
+}
+
+void setup() { 
+  // tell FastLED about the LED strip configuration
+  FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+  
+  // start the serial connection
+  Serial.begin(115200);
+  disableCore0WDT();
+
+  brightnessQueue = xQueueCreate( brightnessQueueSize, sizeof( int ) );
+  animationQueue = xQueueCreate( animationQueueSize, sizeof( int ) );
+
+  // wait for serial monitor to open
+  while(! Serial);
+
+  xTaskCreatePinnedToCore(
+      MonitorLoop, /* Function to implement the task */
+      "MonitorTask", /* Name of the task */
+      16384,  /* Stack size in words */
+      NULL,  /* Task input parameter */
+      0,  /* Priority of the task */
+      &Task1,  /* Task handle. */
+      0); /* Core where the task should run */
+
 }
 
 void loop()
 {
-  unsigned int currTime = millis();
-
-  ArduinoOTA.handle();
-
-  // io.run(); is required for all sketches.
-  // it should always be present at the top of your loop
-  // function. it keeps the client connected to
-  // io.adafruit.com, and processes any incoming data.
-  io.run();
-
-  // don't do anything before we get a time read and set the clock
-  if (timeStatus() == timeNotSet) {
-    if (secTime > 0) {
-      setTime(timeSync());
-      Serial.print("Time set, time is now <- ");
-      digitalClockDisplay();
-    }
-    else {
-      return;
-    }
+  // check queues for new values
+  if(xQueueReceive(brightnessQueue, &brightness, 0) == pdTRUE) {
+    Serial.print("[1] received new brightness value from queue: ");
+    Serial.println(brightness);
   }
   
-  if (currTime - lastMonitorTime >= (MONITOR_SECS * 1000)) {
-    // save count to the 'counter' feed on Adafruit IO
-    Serial.print("sending rssi value -> ");
-    // Serial.println(count);
-    // counter->save(count);
-    // save the wifi signal strength (RSSI) to the 'rssi' feed on Adafruit IO
-    rssi->save(WiFi.RSSI());
-    
-    Serial.print("Time is: ");
-    digitalClockDisplay();
-
-    Serial.print("Brightness value # ");
-    Serial.println(brightnessValue);
-
-    Serial.print("Animation selected value # ");
-    Serial.println(animSelValue);
-
-    // increment the count by 1
-    // count++;
-    lastMonitorTime = currTime;
+  if(xQueueReceive(animationQueue, &animSel, 0) == pdTRUE) {
+    Serial.print("[1] received new animSel value from queue: ");
+    Serial.println(animSel);
   }
-  
-  // // counter disabled to not overload adfruit IO for no need
-  // // reset the count at some hour of the day
-  // if ((hour() == RESET_HOUR) && (minute() == 0) && (second() == 0) && (!resetFlag)) {
-  //   Serial.print("sending count and presses reset at time -> ");
-  //   digitalClockDisplay();
-  //   count = 0;
-  //   counter->save(count);
-  //   // remember a reset happened so we don't do it again and bombard Adafruit IO with requests
-  //   resetFlag = true;
-  // }
-
-  //// reallow reset to occur after reset time has passed
-  // if (second() == 1) {
-  //   resetFlag = false;
-  // }
-
   // start LED handling code
-  if (setBrightnessValue && (brightnessValue >= 0 && brightnessValue < 256)) { 
-    brightness = brightnessValue;
-    setBrightnessValue = false;
-  }
+  // if (setBrightnessValue && (brightnessValue >= 0 && brightnessValue < 256)) { 
+  //   brightness = brightnessValue;
+  //   setBrightnessValue = false;
+  // }
 
   // set master brightness control
   FastLED.setBrightness(brightness);
  
   // disabling isPlain for now until needed (isPlain)
-  if(animSelValue > ( ARRAY_SIZE( gPatterns))) {
+  if(animSel > ( ARRAY_SIZE( gPatterns))) {
     paintAll(CRGB::Red);
   }
-  else if (animSelValue != 0) {
-    gCurrentPatternNumber = animSelValue-1;
-    gPatterns[gCurrentPatternNumber]();
+  else if (animSel > 0) {
+    // gCurrentPatternNumber = animSelValue-1;
+    gPatterns[animSelValue-1]();
   }
   else {
     // Call the current pattern function once, updating the 'leds' array
     gPatterns[gCurrentPatternNumber]();    
   }
+    
+  // gPatterns[gCurrentPatternNumber]();    
 
   // send the 'leds' array out to the actual LED strip
   FastLED.show();  
@@ -372,6 +416,8 @@ void nextPattern()
 {
   // add one to the current pattern number, and wrap around at the end
   gCurrentPatternNumber = (gCurrentPatternNumber + 1) % ARRAY_SIZE( gPatterns);
+  Serial.print("CurrentPatternNumber is now at: ");
+  Serial.println(gCurrentPatternNumber);
 }
 
 void paintRange(int start, int end, CRGB color) {
@@ -473,10 +519,10 @@ void singleColor() {
   changeHue(eHue, eDestHue, E2Top, E2Bot);
 }
 
-void toggleSegment(int iStart, int iEnd, int hue, int sat) {
-  int pos = iStart + random16(iEnd - iStart);
-  leds[pos] += CHSV( hue + random8(16), sat, 255);    
-}
+// void toggleSegment(int iStart, int iEnd, int hue, int sat) {
+//   int pos = iStart + random16(iEnd - iStart);
+//   leds[pos] += CHSV( hue + random8(16), sat, 255);    
+// }
 
 void rainbow() 
 {

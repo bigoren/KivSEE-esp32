@@ -22,7 +22,7 @@ FASTLED_USING_NAMESPACE
 #define LED_TYPE    WS2811
 #define COLOR_ORDER GRB
 #define NUM_LEDS    101
-#define FRAMES_PER_SECOND  120
+#define FRAMES_PER_SECOND  200
 
 CRGB leds[NUM_LEDS];
 
@@ -42,11 +42,12 @@ CRGB leds[NUM_LEDS];
 #define SheepStart  30
 #define SheepEnd  101
 
-const int lettersStart[] = {SheepStart,KTop,ITop,VTop,STop,E1Top, E2Top};
-const int lettersEnd[] = {SheepEnd,KBot,IBot,VBot,SBot,E1Bot, E2Bot};
+// adding 0's at start of array to make it 8 in length so it can be grouped in two letter group convienently
+const int lettersStart[] = {0,SheepStart,KTop,ITop,VTop,STop,E1Top, E2Top};
+const int lettersEnd[]   = {0,SheepEnd,KBot,IBot,VBot,SBot,E1Bot, E2Bot};
 
 // Animations functions declarations
-void quiet(byte color);
+void quiet();
 void nextPattern();
 void paintRange(int start, int end, CRGB color);
 void paintAll(CRGB color);
@@ -75,7 +76,7 @@ bool isPlain = true;
 
 // List of patterns to cycle through.  Each is defined as a separate function below.
 typedef void (*SimplePatternList[])();
-SimplePatternList gPatterns = { confetti, rainbow, singleColor, splash, blink, confettiLetters, dotted, bpm };
+SimplePatternList gPatterns = { confetti, rainbow, singleColor, splash, blink, confettiLetters, dotted, bpm, quiet };
 // SimplePatternList gPatterns = { confettiLetters, fill, dotted, bpm, sinelon, blink, splash, singleColor, rainbow, confetti };
 
 uint8_t gCurrentPatternNumber = 0; // Index number of which pattern is current
@@ -97,7 +98,7 @@ time_t secTime = 0;
 bool secondFlag = false;
 
 // set up the 'time/milliseconds' topic
-//AdafruitIO_Time *msecs = io.time(AIO_TIME_MILLIS);
+AdafruitIO_Time *msecs = io.time(AIO_TIME_MILLIS);
 
 // set up the 'time/ISO-8601' topic
 // AdafruitIO_Time *iso = io.time(AIO_TIME_ISO);
@@ -386,7 +387,7 @@ void loop()
  
   // disabling isPlain for now until needed (isPlain)
   if(animSel > ( ARRAY_SIZE( gPatterns))) {
-    paintAll(CRGB::Red);
+    paintAll(CRGB::Black);
   }
   else if (animSel > 0) {
     // gCurrentPatternNumber = animSelValue-1;
@@ -419,10 +420,8 @@ void loop()
 }
 
 
-void quiet(byte color) {
-  for(int i=0; i<NUM_LEDS; i++) {
-    leds[i] = CHSV(color, 196, 255);
-  }
+void quiet() {
+  paintAll(CRGB::Red);
 }
 
 void nextPattern()
@@ -444,7 +443,7 @@ void paintAll(CRGB color) {
 void confettiLetters() {
   fadeToBlackBy( leds, NUM_LEDS, 10); 
   if(random(255) < 16) {
-    int currentLetter = random(7);
+    int currentLetter = random(2,8); // first letter in array is null
     paintRange(lettersStart[currentLetter], lettersEnd[currentLetter], CHSV(gHue, 255, 255));
   }
 }
@@ -484,11 +483,12 @@ void splash() {
   paintAll(CRGB::Black);
 
   EVERY_N_MILLISECONDS( 330 ) { 
-    currentLetter = (currentLetter + 1 ) % 7; 
+    currentLetter = (currentLetter + 1 ) % 4; // modulo at 4 because we do two letters groups
     currentHue = currentHue + 16;
   }
   
-  paintRange(lettersStart[currentLetter], lettersEnd[currentLetter], CHSV(currentHue, 255, 255));
+  paintRange(lettersStart[2*currentLetter], lettersEnd[2*currentLetter], CHSV(currentHue, 255, 255));
+  paintRange(lettersStart[2*currentLetter+1], lettersEnd[2*currentLetter+1], CHSV(currentHue, 255, 255));
 }
 
 void changeHue(int &currHue, int &destHue, int iStart, int iEnd) {
